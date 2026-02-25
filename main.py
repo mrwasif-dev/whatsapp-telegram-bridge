@@ -6,11 +6,21 @@ import threading
 import base64
 from io import BytesIO
 from datetime import datetime
-from flask import Flask, render_template, send_file, jsonify
+from flask import Flask, render_template, send_file, jsonify, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from pymongo import MongoClient
 from dotenv import load_dotenv
+
+# Selenium imports
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 load_dotenv()
 
@@ -18,19 +28,20 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 MONGODB_URI = os.getenv('MONGODB_URI')
 PORT = int(os.getenv('PORT', 5000))
+ADMIN_IDS = os.getenv('ADMIN_IDS', '').split(',') if os.getenv('ADMIN_IDS') else []
 DEFAULT_TARGET = os.getenv('DEFAULT_TARGET', '')
-
-if not TELEGRAM_BOT_TOKEN or not MONGODB_URI:
-    print("❌ Missing environment variables")
-    sys.exit(1)
 
 # ==================== DATABASE ====================
 class Database:
     def __init__(self):
-        self.client = MongoClient(MONGODB_URI)
-        self.db = self.client['whatsapp_bot']
-        self.settings = self.db['settings']
-        print("✅ MongoDB Connected")
+        try:
+            self.client = MongoClient(MONGODB_URI)
+            self.db = self.client['whatsapp_bot']
+            self.settings = self.db['settings']
+            print("✅ MongoDB Connected")
+        except Exception as e:
+            print(f"❌ MongoDB Error: {e}")
+            sys.exit(1)
 
     def save_qr(self, qr_data):
         self.settings.update_one(
@@ -43,15 +54,15 @@ class Database:
         data = self.settings.find_one({'key': 'qr_code'})
         return data.get('value') if data else None
 
-    def save_target(self, target):
+    def save_target(self, user_id, target):
         self.settings.update_one(
-            {'key': 'target'},
+            {'user_id': user_id, 'key': 'target'},
             {'$set': {'value': target, 'updated': datetime.now()}},
             upsert=True
         )
 
-    def get_target(self):
-        data = self.settings.find_one({'key': 'target'})
+    def get_target(self, user_id):
+        data = self.settings.find_one({'user_id': user_id, 'key': 'target'})
         return data.get('value') if data else DEFAULT_TARGET
 
     def save_auth(self, status):
@@ -65,45 +76,193 @@ class Database:
         data = self.settings.find_one({'key': 'auth'})
         return data.get('value') if data else False
 
-# ==================== FAKE WHATSAPP ====================
-class FakeWhatsApp:
-    """یہ صرف ڈیمو کے لیے ہے - اصلی WhatsApp connection بعد میں لگائیں گے"""
+    def save_session(self, session_data):
+        self.settings.update_one(
+            {'key': 'session'},
+            {'$set': {'value': session_data, 'updated': datetime.now()}},
+            upsert=True
+        )
+
+    def get_session(self):
+        data = self.settings.find_one({'key': 'session'})
+        return data.get('value') if data else None
+
+# ==================== REAL WHATSAPP CONTROLLER ====================
+class WhatsAppController:
     def __init__(self, db):
         self.db = db
-        self.is_ready = False
-        self.target = db.get_target()
+        self.driver = None
+        self.is_connected = False
+        self.target_number = None
+        self.setup_driver()
+
+    def setup_driver(self):
+        """Setup Chrome driver for WhatsApp Web"""
+        try:
+            options = Options()
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--window-size=1920,1080')
+            
+            # Load saved session if exists
+            session = self.db.get_session()
+            if session:
+                options.add_argument(f'user-data-dir={session}')
+            
+            self.driver = webdriver.Chrome(
+                service=Service(ChromeDriverManager().install()),
+                options=options
+            )
+            print("✅ Chrome driver initialized")
+            return True
+        except Exception as e:
+            print(f"❌ Chrome driver error: {e}")
+            return False
+
+    def get_qr(self):
+        """Get real WhatsApp Web QR code"""
+        try:
+            if not self.driver:
+                self.setup_driver()
+            
+            self.driver.get('https://web.whatsapp.com')
+            time.sleep(5)
+            
+            # Wait for QR code
+            wait = WebDriverWait(self.driver, 30)
+            qr_element = wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'div[data-ref]'))
+            )
+            
+            qr_data = qr_element.get_attribute('data-ref')
+            
+            if qr_data:
+                # Generate QR image
+                qr = qrcode.QRCode(version=1, box_size=10, border=5)
+                qr.add_data(qr_data)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color="black", back_color="white")
+                
+                buffered = BytesIO()
+                img.save(buffered, format="PNG")
+                img_base64 = base64.b64encode(buffered.getvalue()).decode()
+                
+                # Save to database
+                self.db.save_qr(img_base64)
+                
+                # Start login checker in background
+                threading.Thread(target=self.wait_for_login, daemon=True).start()
+                
+                return img_base64
+            return None
+        except Exception as e:
+            print(f"❌ QR error: {e}")
+            return None
+
+    def wait_for_login(self):
+        """Wait for user to scan QR and login"""
+        try:
+            print("⏳ Waiting for QR scan...")
+            wait = WebDriverWait(self.driver, 120)
+            
+            # Wait for search box to appear (login successful)
+            wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'div[contenteditable="true"][title="Search input textbox"]'))
+            )
+            
+            # Save session
+            self.db.save_session(self.driver.session_id)
+            self.db.save_auth(True)
+            self.is_connected = True
+            print("✅ WhatsApp connected!")
+            
+        except Exception as e:
+            print(f"❌ Login timeout: {e}")
+            self.is_connected = False
+
+    def send_message(self, to_number, message):
+        """Send message to WhatsApp number"""
+        if not self.is_connected:
+            return False
         
-        # پہلے سے سیو شدہ QR چیک کریں
-        if not db.get_qr():
-            self.generate_fake_qr()
-    
-    def generate_fake_qr(self):
-        """ایک فرضی QR کوڈ بنا کر سیو کر دیتا ہے"""
-        qr = qrcode.QRCode(version=1, box_size=10, border=5)
-        qr.add_data("https://web.whatsapp.com")
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
+        try:
+            # Search for contact
+            search_box = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'div[contenteditable="true"][title="Search input textbox"]'))
+            )
+            search_box.clear()
+            search_box.send_keys(to_number)
+            time.sleep(2)
+            search_box.send_keys(Keys.ENTER)
+            time.sleep(2)
+            
+            # Type and send message
+            message_box = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'div[contenteditable="true"][title="Type a message"]'))
+            )
+            message_box.send_keys(message)
+            message_box.send_keys(Keys.ENTER)
+            
+            return True
+        except Exception as e:
+            print(f"❌ Send error: {e}")
+            return False
+
+    def send_media(self, to_number, file_path, caption=""):
+        """Send media file to WhatsApp"""
+        if not self.is_connected:
+            return False
         
-        buffered = BytesIO()
-        img.save(buffered, format="PNG")
-        img_base64 = base64.b64encode(buffered.getvalue()).decode()
-        
-        self.db.save_qr(img_base64)
-        print("✅ Fake QR generated")
-    
-    def connect(self):
-        """واٹس ایپ کنیکٹ کرنے کا عمل"""
-        print("📱 Connecting to WhatsApp...")
-        time.sleep(3)
-        self.is_ready = True
-        self.db.save_auth(True)
-        print("✅ WhatsApp Connected!")
-        return True
+        try:
+            # Search contact
+            search_box = self.driver.find_element(By.CSS_SELECTOR, 'div[contenteditable="true"][title="Search input textbox"]')
+            search_box.clear()
+            search_box.send_keys(to_number)
+            time.sleep(2)
+            search_box.send_keys(Keys.ENTER)
+            time.sleep(2)
+            
+            # Attach file
+            attach_btn = self.driver.find_element(By.CSS_SELECTOR, 'div[title="Attach"]')
+            attach_btn.click()
+            time.sleep(1)
+            
+            file_input = self.driver.find_element(By.CSS_SELECTOR, 'input[accept="*"]')
+            file_input.send_keys(file_path)
+            time.sleep(3)
+            
+            # Add caption
+            if caption:
+                caption_box = self.driver.find_element(By.CSS_SELECTOR, 'div[contenteditable="true"][title="Type a message"]')
+                caption_box.send_keys(caption)
+                time.sleep(1)
+            
+            # Send
+            send_btn = self.driver.find_element(By.CSS_SELECTOR, 'span[data-icon="send"]')
+            send_btn.click()
+            
+            return True
+        except Exception as e:
+            print(f"❌ Media error: {e}")
+            return False
+
+    def logout(self):
+        """Logout from WhatsApp"""
+        try:
+            if self.driver:
+                self.driver.quit()
+            self.is_connected = False
+            self.db.save_auth(False)
+            self.db.save_qr(None)
+            return True
+        except:
+            return False
 
 # ==================== FLASK WEB ====================
 app = Flask(__name__)
-whatsapp = None
 db = Database()
+wa = WhatsAppController(db)
 
 @app.route('/')
 def home():
@@ -115,7 +274,7 @@ def get_qr():
     if qr_base64:
         qr_data = base64.b64decode(qr_base64)
         return send_file(BytesIO(qr_data), mimetype='image/png')
-    return "No QR", 404
+    return "QR not ready", 404
 
 @app.route('/qr-base64')
 def get_qr_base64():
@@ -125,132 +284,154 @@ def get_qr_base64():
     return jsonify({'qr': None})
 
 @app.route('/status')
-def status():
+def get_status():
     return jsonify({
-        'connected': whatsapp.is_ready if whatsapp else False,
-        'target': whatsapp.target if whatsapp else None,
+        'connected': wa.is_connected,
         'authenticated': db.get_auth()
     })
 
 # ==================== TELEGRAM BOT ====================
 class TelegramBot:
-    def __init__(self, token, wa, database):
-        self.wa = wa
+    def __init__(self, token, wa_controller, database):
+        self.wa = wa_controller
         self.db = database
         self.app = Application.builder().token(token).build()
-        self.setup()
-    
-    def setup(self):
-        self.app.add_handler(CommandHandler("start", self.start))
-        self.app.add_handler(CommandHandler("help", self.help))
-        self.app.add_handler(CommandHandler("settarget", self.set_target))
-        self.app.add_handler(CommandHandler("gettarget", self.get_target))
-        self.app.add_handler(CommandHandler("status", self.status))
-        self.app.add_handler(CommandHandler("qr", self.qr))
-        self.app.add_handler(CommandHandler("connect", self.connect))
-        self.app.add_handler(CommandHandler("ping", self.ping))
-    
-    async def start(self, update: Update, context):
+        self.setup_handlers()
+
+    def setup_handlers(self):
+        self.app.add_handler(CommandHandler("start", self.cmd_start))
+        self.app.add_handler(CommandHandler("help", self.cmd_help))
+        self.app.add_handler(CommandHandler("settarget", self.cmd_settarget))
+        self.app.add_handler(CommandHandler("gettarget", self.cmd_gettarget))
+        self.app.add_handler(CommandHandler("qr", self.cmd_qr))
+        self.app.add_handler(CommandHandler("status", self.cmd_status))
+        self.app.add_handler(CommandHandler("logout", self.cmd_logout))
+        self.app.add_handler(CommandHandler("ping", self.cmd_ping))
+        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
+        self.app.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
+
+    async def cmd_start(self, update: Update, context):
         await update.message.reply_text(
-            "🤖 *Telegram-WhatsApp Bot*\n\n"
+            "🤖 *WhatsApp Bridge Bot*\n\n"
             "Commands:\n"
             "/settarget 923001234567 - Set WhatsApp number\n"
-            "/gettarget - Show current target\n"
-            "/qr - Get QR code\n"
-            "/connect - Connect WhatsApp\n"
-            "/status - Check status\n"
-            "/ping - Ping test",
+            "/qr - Get WhatsApp QR\n"
+            "/status - Check connection\n"
+            "/help - More commands",
             parse_mode='Markdown'
         )
-    
-    async def help(self, update: Update, context):
+
+    async def cmd_help(self, update: Update, context):
         await update.message.reply_text(
             "📚 *How to use:*\n\n"
             "1. Set target: /settarget 923001234567\n"
             "2. Get QR: /qr\n"
-            "3. Connect: /connect\n"
-            "4. Send any message to test"
+            "3. Scan QR with WhatsApp\n"
+            "4. Wait for 'Connected' message\n"
+            "5. Send any message or photo"
         )
-    
-    async def set_target(self, update: Update, context):
-        try:
-            if not context.args:
-                await update.message.reply_text("Usage: /settarget 923001234567")
-                return
-            target = context.args[0]
-            self.db.save_target(target)
-            self.wa.target = target
-            await update.message.reply_text(f"✅ Target set: +{target}")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}")
-    
-    async def get_target(self, update: Update, context):
-        target = self.db.get_target()
+
+    async def cmd_settarget(self, update: Update, context):
+        if not context.args:
+            await update.message.reply_text("Usage: /settarget 923001234567")
+            return
+        target = context.args[0]
+        self.db.save_target(update.effective_user.id, target)
+        self.wa.target_number = target
+        await update.message.reply_text(f"✅ Target set: +{target}")
+
+    async def cmd_gettarget(self, update: Update, context):
+        target = self.db.get_target(update.effective_user.id)
         if target:
             await update.message.reply_text(f"📱 Target: +{target}")
         else:
             await update.message.reply_text("⚠️ No target set")
-    
-    async def status(self, update: Update, context):
-        status = "✅ Connected" if self.wa.is_ready else "❌ Disconnected"
-        await update.message.reply_text(f"WhatsApp: {status}")
-    
-    async def qr(self, update: Update, context):
-        qr_base64 = self.db.get_qr()
+
+    async def cmd_qr(self, update: Update, context):
+        await update.message.reply_text("⏳ Generating WhatsApp QR...")
+        
+        qr_base64 = self.wa.get_qr()
         if qr_base64:
             qr_data = base64.b64decode(qr_base64)
             await update.message.reply_photo(
                 photo=BytesIO(qr_data),
-                caption="📱 Scan this QR with WhatsApp Web"
+                caption="📱 Scan this QR with WhatsApp Web\nBot will notify when connected"
             )
         else:
-            await update.message.reply_text("❌ QR not available")
-    
-    async def connect(self, update: Update, context):
-        await update.message.reply_text("⏳ Connecting to WhatsApp...")
-        success = self.wa.connect()
-        if success:
-            await update.message.reply_text("✅ WhatsApp Connected!")
-        else:
-            await update.message.reply_text("❌ Connection failed")
-    
-    async def ping(self, update: Update, context):
-        await update.message.reply_text("🏓 Pong!")
-    
-    def run(self):
-        print("🤖 Telegram Bot Started")
-        self.app.run_polling()
+            await update.message.reply_text("❌ Failed to generate QR")
 
-# ==================== WORKER ====================
-def start_whatsapp():
-    global whatsapp
-    whatsapp = FakeWhatsApp(db)
-    print("📱 WhatsApp Worker Ready")
-    
-    # خودکار کنیکٹ
-    if not whatsapp.is_ready:
-        whatsapp.connect()
+    async def cmd_status(self, update: Update, context):
+        status = "✅ Connected" if self.wa.is_connected else "❌ Disconnected"
+        await update.message.reply_text(f"WhatsApp: {status}")
+
+    async def cmd_logout(self, update: Update, context):
+        if self.wa.logout():
+            await update.message.reply_text("✅ Logged out")
+        else:
+            await update.message.reply_text("❌ Logout failed")
+
+    async def cmd_ping(self, update: Update, context):
+        await update.message.reply_text("🏓 Pong!")
+
+    async def handle_text(self, update: Update, context):
+        if not self.wa.is_connected:
+            await update.message.reply_text("❌ WhatsApp not connected. Use /qr first")
+            return
+        
+        target = self.db.get_target(update.effective_user.id)
+        if not target:
+            await update.message.reply_text("❌ No target set. Use /settarget")
+            return
+        
+        success = self.wa.send_message(target, update.message.text)
+        if success:
+            await update.message.reply_text("✅ Sent")
+        else:
+            await update.message.reply_text("❌ Failed")
+
+    async def handle_photo(self, update: Update, context):
+        if not self.wa.is_connected:
+            await update.message.reply_text("❌ WhatsApp not connected")
+            return
+        
+        target = self.db.get_target(update.effective_user.id)
+        if not target:
+            await update.message.reply_text("❌ No target set")
+            return
+        
+        try:
+            file = await update.message.photo[-1].get_file()
+            file_path = f"/tmp/photo_{int(time.time())}.jpg"
+            await file.download_to_drive(file_path)
+            
+            caption = update.message.caption or "📸 Photo"
+            success = self.wa.send_media(target, file_path, caption)
+            
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            
+            if success:
+                await update.message.reply_text("✅ Photo sent")
+            else:
+                await update.message.reply_text("❌ Failed")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+
+    def run(self):
+        self.app.run_polling()
 
 # ==================== MAIN ====================
 if __name__ == '__main__':
     print("🚀 Starting Bot...")
     
-    # سٹارٹ WhatsApp
-    start_whatsapp()
-    
     if 'DYNO' in os.environ:  # Heroku
         dyno = os.environ.get('DYNO', '').split('.')[0]
         if dyno == 'web':
-            print("🌐 Starting Web Server...")
             app.run(host='0.0.0.0', port=PORT)
         else:
-            print("🤖 Starting Telegram Bot...")
-            bot = TelegramBot(TELEGRAM_BOT_TOKEN, whatsapp, db)
+            bot = TelegramBot(TELEGRAM_BOT_TOKEN, wa, db)
             bot.run()
     else:  # Local
-        print("💻 Local Mode")
-        
-        # Flask in background
         def run_flask():
             app.run(host='0.0.0.0', port=PORT, debug=False)
         
@@ -258,6 +439,5 @@ if __name__ == '__main__':
         flask_thread.daemon = True
         flask_thread.start()
         
-        # Telegram Bot
-        bot = TelegramBot(TELEGRAM_BOT_TOKEN, whatsapp, db)
+        bot = TelegramBot(TELEGRAM_BOT_TOKEN, wa, db)
         bot.run()
