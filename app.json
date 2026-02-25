@@ -1,29 +1,26 @@
 {
   "name": "Telegram-WhatsApp Bridge Bot",
   "description": "Bridge bot to forward messages from Telegram to WhatsApp",
-  "repository": "https://github.com/mrwasif-dev/telegram-whatsapp-bridge",
-  "keywords": ["python", "telegram", "whatsapp", "bot", "bridge"],
+  "repository": "https://github.com/mrwasif-dev/whatsapp-telegram-bridge",
+  "keywords": ["python", "telegram", "whatsapp", "bot", "bridge", "selenium"],
   "env": {
     "TELEGRAM_BOT_TOKEN": {
       "description": "Your Telegram bot token from @BotFather",
       "required": true
     },
     "MONGODB_URI": {
-      "description": "MongoDB connection URI (use MongoDB Atlas)",
+      "description": "MongoDB connection URI (Get from MongoDB Atlas - mongodb+srv://username:password@cluster.mongodb.net/dbname)",
       "required": true
     },
     "ADMIN_IDS": {
-      "description": "Comma-separated Telegram user IDs for admin access",
+      "description": "Comma-separated Telegram user IDs for admin access (optional)",
       "required": false
     },
     "DEFAULT_TARGET": {
-      "description": "Default WhatsApp target number (format: 923001234567)",
+      "description": "Default WhatsApp target number in international format (e.g., 923001234567)",
       "required": false
     }
   },
-  "addons": [
-    "mongolab"
-  ],
   "buildpacks": [
     {
       "url": "heroku/python"
@@ -34,5 +31,16 @@
     {
       "url": "https://github.com/heroku/heroku-buildpack-chromedriver"
     }
-  ]
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    },
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "stack": "heroku-22"
 }
