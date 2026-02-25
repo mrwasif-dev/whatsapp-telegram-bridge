@@ -1,19 +1,19 @@
 <!DOCTYPE html>
-<html lang="ur" dir="rtl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>واٹس ایپ QR کوڈ - برج بوٹ</title>
+    <title>WhatsApp QR - Bridge Bot</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
         }
         
         body {
-            background: linear-gradient(135deg, #00c851, #007e33);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
             justify-content: center;
@@ -25,20 +25,38 @@
             background: white;
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            padding: 30px;
-            max-width: 400px;
+            padding: 40px;
+            max-width: 500px;
             width: 100%;
             text-align: center;
         }
         
-        h1 {
-            color: #075e54;
-            margin-bottom: 10px;
-            font-size: 24px;
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: #25D366;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            color: white;
+            font-size: 40px;
         }
         
-        .qr-box {
-            background: #f0f0f0;
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .qr-container {
+            background: #f5f5f5;
             border-radius: 15px;
             padding: 20px;
             margin: 20px 0;
@@ -46,24 +64,25 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            border: 2px dashed #ccc;
         }
         
         #qrImage {
             max-width: 100%;
             height: auto;
             border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
         }
         
         .loading {
             text-align: center;
-            color: #666;
         }
         
         .spinner {
             width: 50px;
             height: 50px;
             border: 5px solid #f3f3f3;
-            border-top: 5px solid #25D366;
+            border-top: 5px solid #667eea;
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 20px auto;
@@ -74,59 +93,100 @@
             100% { transform: rotate(360deg); }
         }
         
-        .status {
-            padding: 10px;
-            border-radius: 8px;
-            margin: 15px 0;
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+            border-left: 4px solid #667eea;
+        }
+        
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .status-label {
+            color: #666;
             font-weight: 500;
         }
         
-        .connected {
-            background: #d4edda;
-            color: #155724;
+        .status-value {
+            font-weight: 600;
         }
         
-        .waiting {
-            background: #fff3cd;
-            color: #856404;
+        .connected {
+            color: #28a745;
+        }
+        
+        .disconnected {
+            color: #dc3545;
+        }
+        
+        .button-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 1px solid transparent;
+        }
+        
+        button:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        button.secondary {
+            background: white;
+            color: #667eea;
+            border-color: #667eea;
+        }
+        
+        button.secondary:hover {
+            background: #667eea;
+            color: white;
         }
         
         .steps {
-            text-align: right;
-            background: #e8f5e9;
-            padding: 15px;
+            text-align: left;
+            background: #f0f4f8;
+            padding: 20px;
             border-radius: 10px;
             margin-top: 20px;
         }
         
         .steps h3 {
-            color: #1b5e20;
-            margin-bottom: 10px;
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         
         .steps ol {
-            padding-right: 20px;
-            color: #2e7d32;
+            padding-left: 20px;
+            color: #555;
             line-height: 1.8;
         }
         
-        button {
-            background: #25D366;
-            color: white;
-            border: none;
-            padding: 12px 30px;
-            border-radius: 25px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-            margin: 10px 0;
-            width: 100%;
-            transition: all 0.3s;
-        }
-        
-        button:hover {
-            background: #128C7E;
-            transform: scale(1.02);
+        .steps li {
+            margin-bottom: 10px;
         }
         
         .footer {
@@ -134,94 +194,157 @@
             color: #999;
             font-size: 12px;
         }
+        
+        .refresh-time {
+            color: #999;
+            font-size: 12px;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>📱 واٹس ایپ ویب</h1>
-        <p>QR کوڈ اسکین کریں</p>
+        <div class="logo">
+            📱
+        </div>
         
-        <div class="qr-box">
-            <img id="qrImage" src="/qr" alt="QR Code" style="display: none;">
+        <h1>WhatsApp Web QR Code</h1>
+        <p class="subtitle">Scan to connect your WhatsApp</p>
+        
+        <div class="qr-container" id="qrContainer">
+            <img id="qrImage" src="" alt="QR Code" style="display: none;">
             <div class="loading" id="loading">
                 <div class="spinner"></div>
-                <p>QR کوڈ جنریٹ ہو رہا ہے...</p>
+                <p>Generating QR code...</p>
             </div>
         </div>
         
-        <div class="status waiting" id="status">
-            ⏳ اسکین کرنے کا انتظار ہے...
+        <div class="status-card">
+            <div class="status-item">
+                <span class="status-label">WhatsApp Status:</span>
+                <span class="status-value disconnected" id="whatsappStatus">Disconnected</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Target Number:</span>
+                <span class="status-value" id="targetNumber">Not set</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Authentication:</span>
+                <span class="status-value" id="authStatus">Pending</span>
+            </div>
         </div>
         
-        <button onclick="refreshQR()">🔄 نیا QR کوڈ</button>
-        <button onclick="checkStatus()">🔍 سٹیٹس چیک کریں</button>
+        <div class="button-group">
+            <button onclick="refreshQR()" class="secondary">
+                🔄 Refresh QR
+            </button>
+            <button onclick="checkStatus()">
+                🔍 Check Status
+            </button>
+        </div>
         
         <div class="steps">
-            <h3>مراحل:</h3>
+            <h3>📋 How to connect:</h3>
             <ol>
-                <li>واٹس ایپ کھولیں</li>
-                <li>مینو میں جائیں</li>
-                <li>"واٹس ایپ ویب" منتخب کریں</li>
-                <li>یہ QR کوڈ اسکین کریں</li>
-                <li>کنیکٹ ہونے کا انتظار کریں</li>
+                <li>Open WhatsApp on your phone</li>
+                <li>Tap Menu (3 dots) or Settings</li>
+                <li>Select "Linked Devices" or "WhatsApp Web"</li>
+                <li>Tap "Link a Device"</li>
+                <li>Scan this QR code with your phone</li>
+                <li>Wait for confirmation</li>
             </ol>
         </div>
         
+        <div class="refresh-time" id="refreshTime">
+            Last updated: Just now
+        </div>
+        
         <div class="footer">
-            Telegram-WhatsApp Bridge Bot
+            Telegram-WhatsApp Bridge Bot | v1.0
         </div>
     </div>
     
     <script>
-        // QR کوڈ لوڈ کریں
+        let lastRefresh = Date.now();
+        
+        // Load QR code
         function loadQR() {
-            fetch('/qr')
-                .then(response => {
-                    if (response.ok) {
-                        document.getElementById('qrImage').src = '/qr?' + new Date().getTime();
+            fetch('/qr-base64')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.qr) {
+                        document.getElementById('qrImage').src = 'data:image/png;base64,' + data.qr;
                         document.getElementById('qrImage').style.display = 'block';
                         document.getElementById('loading').style.display = 'none';
+                        updateRefreshTime();
                     } else {
+                        // No QR yet, try again
                         setTimeout(loadQR, 3000);
                     }
                 })
-                .catch(() => setTimeout(loadQR, 3000));
+                .catch(error => {
+                    console.error('Error loading QR:', error);
+                    setTimeout(loadQR, 3000);
+                });
         }
         
-        // سٹیٹس چیک کریں
+        // Check status
         function checkStatus() {
             fetch('/status')
                 .then(response => response.json())
                 .then(data => {
-                    const statusDiv = document.getElementById('status');
+                    const statusEl = document.getElementById('whatsappStatus');
+                    const targetEl = document.getElementById('targetNumber');
+                    const authEl = document.getElementById('authStatus');
+                    
                     if (data.connected) {
-                        statusDiv.className = 'status connected';
-                        statusDiv.innerHTML = '✅ واٹس ایپ کنیکٹ ہے!';
+                        statusEl.textContent = '✅ Connected';
+                        statusEl.className = 'status-value connected';
+                        
                         if (data.target) {
-                            statusDiv.innerHTML += `<br>📱 ٹارگٹ: +${data.target}`;
+                            targetEl.textContent = '+' + data.target;
                         }
                     } else {
-                        statusDiv.className = 'status waiting';
-                        statusDiv.innerHTML = '⏳ کنیکٹ نہیں ہے...';
+                        statusEl.textContent = '❌ Disconnected';
+                        statusEl.className = 'status-value disconnected';
                     }
-                });
+                    
+                    if (data.authenticated) {
+                        authEl.textContent = '✅ Authenticated';
+                        authEl.className = 'status-value connected';
+                    } else {
+                        authEl.textContent = '⏳ Pending';
+                        authEl.className = 'status-value';
+                    }
+                })
+                .catch(error => console.error('Error checking status:', error));
         }
         
-        // ریفریش
+        // Refresh QR
         function refreshQR() {
             document.getElementById('qrImage').style.display = 'none';
             document.getElementById('loading').style.display = 'block';
-            document.getElementById('status').className = 'status waiting';
-            document.getElementById('status').innerHTML = '⏳ QR کوڈ جنریٹ ہو رہا ہے...';
             
-            setTimeout(loadQR, 2000);
+            // Clear old QR from server
+            fetch('/qr-base64', { method: 'DELETE' })
+                .finally(() => {
+                    setTimeout(loadQR, 2000);
+                });
         }
         
-        // ہر 5 سیکنڈ بعد سٹیٹس چیک کریں
+        // Update refresh time
+        function updateRefreshTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString();
+            document.getElementById('refreshTime').textContent = `Last updated: ${timeStr}`;
+        }
+        
+        // Auto refresh status every 5 seconds
         setInterval(checkStatus, 5000);
         
-        // صفحہ لوڈ ہوتے ہی QR لائیں
-        window.onload = loadQR;
+        // Load initial data
+        loadQR();
+        checkStatus();
     </script>
 </body>
 </html>
