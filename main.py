@@ -4,7 +4,6 @@ import time
 import qrcode
 import threading
 import base64
-import requests
 from io import BytesIO
 from datetime import datetime
 from flask import Flask, render_template, send_file, jsonify
@@ -32,10 +31,11 @@ PORT = int(os.getenv('PORT', 5000))
 DEFAULT_TARGET = os.getenv('DEFAULT_TARGET', '')
 
 if not TELEGRAM_BOT_TOKEN:
-    print("❌ TELEGRAM_BOT_TOKEN missing")
+    print("❌ TELEGRAM_BOT_TOKEN not set")
     sys.exit(1)
+
 if not MONGODB_URI:
-    print("❌ MONGODB_URI missing")
+    print("❌ MONGODB_URI not set")
     sys.exit(1)
 
 # ==================== DATABASE ====================
@@ -79,6 +79,17 @@ class Database:
         data = self.settings.find_one({'key': 'auth'})
         return data.get('value') if data else False
 
+    def save_session(self, session_data):
+        self.settings.update_one(
+            {'key': 'session'},
+            {'$set': {'value': session_data, 'updated': datetime.now()}},
+            upsert=True
+        )
+
+    def get_session(self):
+        data = self.settings.find_one({'key': 'session'})
+        return data.get('value') if data else None
+
 # ==================== WHATSAPP CONTROLLER ====================
 class WhatsAppController:
     def __init__(self, db):
@@ -95,6 +106,7 @@ class WhatsAppController:
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
             options.add_argument('--window-size=1920,1080')
+            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
             
             # Heroku ke liye
             if 'DYNO' in os.environ:
@@ -119,7 +131,7 @@ class WhatsAppController:
             self.driver.get('https://web.whatsapp.com')
             time.sleep(5)
             
-            # QR element ka wait karo
+            # Wait for QR code
             wait = WebDriverWait(self.driver, 30)
             qr_element = wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, 'div[data-ref]'))
@@ -127,7 +139,7 @@ class WhatsAppController:
             
             qr_ref = qr_element.get_attribute('data-ref')
             if qr_ref:
-                # QR image banao
+                # Generate QR image
                 qr = qrcode.QRCode(version=1, box_size=10, border=5)
                 qr.add_data(qr_ref)
                 qr.make(fit=True)
@@ -140,7 +152,7 @@ class WhatsAppController:
                 self.db.save_qr(img_base64)
                 self.qr_ready = True
                 
-                # Login checker start karo
+                # Start login checker
                 threading.Thread(target=self.check_login, daemon=True).start()
                 
                 return img_base64
@@ -149,12 +161,12 @@ class WhatsAppController:
             return None
 
     def check_login(self):
-        """Check if user scanned QR and logged in"""
+        """Check if user scanned QR"""
         try:
             print("⏳ Waiting for QR scan...")
             wait = WebDriverWait(self.driver, 120)
             
-            # Search box ka wait (login successful)
+            # Wait for search box (login successful)
             wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, 'div[contenteditable="true"][title="Search input textbox"]'))
             )
@@ -172,6 +184,7 @@ class WhatsAppController:
         if not self.is_connected:
             return False
         try:
+            # Search for contact
             search = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, 'div[contenteditable="true"][title="Search input textbox"]'))
             )
@@ -181,11 +194,13 @@ class WhatsAppController:
             search.send_keys(Keys.ENTER)
             time.sleep(2)
             
+            # Type and send message
             msg = self.driver.find_element(By.CSS_SELECTOR, 'div[contenteditable="true"][title="Type a message"]')
             msg.send_keys(message)
             msg.send_keys(Keys.ENTER)
             return True
-        except:
+        except Exception as e:
+            print(f"❌ Send error: {e}")
             return False
 
 # ==================== FLASK WEB ====================
@@ -201,8 +216,9 @@ def home():
 def get_qr():
     qr = db.get_qr()
     if qr:
-        return send_file(BytesIO(base64.b64decode(qr)), mimetype='image/png')
-    return "No QR", 404
+        qr_data = base64.b64decode(qr)
+        return send_file(BytesIO(qr_data), mimetype='image/png')
+    return "QR not ready", 404
 
 @app.route('/qr-base64')
 def get_qr_base64():
@@ -210,7 +226,7 @@ def get_qr_base64():
     return jsonify({'qr': qr})
 
 @app.route('/status')
-def status():
+def get_status():
     return jsonify({
         'connected': wa.is_connected,
         'qr_ready': wa.qr_ready,
@@ -223,71 +239,77 @@ class TelegramBot:
         self.wa = wa
         self.db = db
         self.app = Application.builder().token(token).build()
-        self.setup()
+        self.setup_handlers()
 
-    def setup(self):
-        self.app.add_handler(CommandHandler("start", self.start))
-        self.app.add_handler(CommandHandler("help", self.help))
-        self.app.add_handler(CommandHandler("settarget", self.set_target))
-        self.app.add_handler(CommandHandler("gettarget", self.get_target))
-        self.app.add_handler(CommandHandler("qr", self.qr))
-        self.app.add_handler(CommandHandler("status", self.status))
-        self.app.add_handler(CommandHandler("ping", self.ping))
+    def setup_handlers(self):
+        self.app.add_handler(CommandHandler("start", self.cmd_start))
+        self.app.add_handler(CommandHandler("help", self.cmd_help))
+        self.app.add_handler(CommandHandler("settarget", self.cmd_settarget))
+        self.app.add_handler(CommandHandler("gettarget", self.cmd_gettarget))
+        self.app.add_handler(CommandHandler("qr", self.cmd_qr))
+        self.app.add_handler(CommandHandler("status", self.cmd_status))
+        self.app.add_handler(CommandHandler("ping", self.cmd_ping))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
 
-    async def start(self, update: Update, context):
+    async def cmd_start(self, update: Update, context):
         await update.message.reply_text(
             "🤖 *WhatsApp Bridge Bot*\n\n"
-            "1. /settarget 923001234567 - Set number\n"
-            "2. /qr - Get QR code\n"
-            "3. Scan QR with WhatsApp\n"
-            "4. /status - Check connection\n"
-            "5. Send any message to forward",
+            "Commands:\n"
+            "• /settarget 923001234567 - Set WhatsApp number\n"
+            "• /qr - Get WhatsApp QR code\n"
+            "• /status - Check connection\n"
+            "• /help - More commands",
             parse_mode='Markdown'
         )
 
-    async def help(self, update: Update, context):
+    async def cmd_help(self, update: Update, context):
         await update.message.reply_text(
-            "📚 *Commands:*\n"
-            "/settarget [number] - Set WhatsApp number\n"
-            "/gettarget - Show current target\n"
-            "/qr - Get WhatsApp QR\n"
-            "/status - Check connection\n"
-            "/ping - Ping test"
+            "📚 *How to Use:*\n\n"
+            "1. Set target number:\n"
+            "   /settarget 923001234567\n\n"
+            "2. Get QR code:\n"
+            "   /qr\n\n"
+            "3. Scan QR with WhatsApp Web\n\n"
+            "4. Check connection:\n"
+            "   /status\n\n"
+            "5. Send any message to forward"
         )
 
-    async def set_target(self, update: Update, context):
+    async def cmd_settarget(self, update: Update, context):
         if not context.args:
             await update.message.reply_text("Usage: /settarget 923001234567")
             return
         target = context.args[0]
+        if not target.isdigit() or len(target) < 10:
+            await update.message.reply_text("❌ Invalid number. Use format: 923001234567")
+            return
         self.db.save_target(target)
-        await update.message.reply_text(f"✅ Target set: +{target}")
+        await update.message.reply_text(f"✅ Target set to: +{target}")
 
-    async def get_target(self, update: Update, context):
+    async def cmd_gettarget(self, update: Update, context):
         target = self.db.get_target()
         if target:
-            await update.message.reply_text(f"📱 Target: +{target}")
+            await update.message.reply_text(f"📱 Current target: +{target}")
         else:
             await update.message.reply_text("⚠️ No target set")
 
-    async def qr(self, update: Update, context):
-        await update.message.reply_text("⏳ Generating QR code...")
-        qr_base64 = self.wa.get_qr()
-        if qr_base64:
-            qr_data = base64.b64decode(qr_base64)
+    async def cmd_qr(self, update: Update, context):
+        await update.message.reply_text("⏳ Generating WhatsApp QR code...")
+        qr = self.wa.get_qr()
+        if qr:
+            qr_data = base64.b64decode(qr)
             await update.message.reply_photo(
                 photo=BytesIO(qr_data),
-                caption="📱 Scan this QR with WhatsApp Web"
+                caption="📱 Scan this QR with WhatsApp Web\nBot will notify when connected"
             )
         else:
             await update.message.reply_text("❌ Failed to generate QR")
 
-    async def status(self, update: Update, context):
+    async def cmd_status(self, update: Update, context):
         status = "✅ Connected" if self.wa.is_connected else "❌ Disconnected"
         await update.message.reply_text(f"WhatsApp: {status}")
 
-    async def ping(self, update: Update, context):
+    async def cmd_ping(self, update: Update, context):
         await update.message.reply_text("🏓 Pong!")
 
     async def handle_text(self, update: Update, context):
@@ -301,26 +323,36 @@ class TelegramBot:
             return
         
         success = self.wa.send_message(target, update.message.text)
-        await update.message.reply_text("✅ Sent" if success else "❌ Failed")
+        if success:
+            await update.message.reply_text("✅ Message forwarded to WhatsApp")
+        else:
+            await update.message.reply_text("❌ Failed to send message")
 
     def run(self):
         self.app.run_polling()
 
 # ==================== MAIN ====================
 if __name__ == '__main__':
-    print("🚀 Starting...")
+    print("🚀 Starting WhatsApp Bridge Bot...")
     
     if 'DYNO' in os.environ:  # Heroku
         dyno = os.environ.get('DYNO', '').split('.')[0]
         if dyno == 'web':
+            print("🌐 Starting web server...")
             app.run(host='0.0.0.0', port=PORT)
         else:
+            print("🤖 Starting telegram bot...")
             bot = TelegramBot(TELEGRAM_BOT_TOKEN, wa, db)
             bot.run()
     else:  # Local
+        print("💻 Running in local mode")
+        
         def run_flask():
             app.run(host='0.0.0.0', port=PORT, debug=False)
         
-        threading.Thread(target=run_flask, daemon=True).start()
+        flask_thread = threading.Thread(target=run_flask)
+        flask_thread.daemon = True
+        flask_thread.start()
+        
         bot = TelegramBot(TELEGRAM_BOT_TOKEN, wa, db)
         bot.run()
