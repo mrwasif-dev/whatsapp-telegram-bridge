@@ -1,7 +1,7 @@
 python-telegram-bot==20.7
 selenium==4.15.0
 webdriver-manager==4.0.1
-pymongo==5.0.0
+pymongo==4.6.1
 flask==3.0.0
 qrcode==7.4.2
 pillow==10.1.0
