@@ -1,0 +1,7 @@
+build:
+  languages:
+    - python
+  
+run:
+  web: gunicorn main:app
+  worker: python main.py
