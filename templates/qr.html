@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ur" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>واٹس ایپ QR کوڈ - برج بوٹ</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #00c851, #007e33);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 30px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+        
+        h1 {
+            color: #075e54;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+        
+        .qr-box {
+            background: #f0f0f0;
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+            min-height: 300px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #qrImage {
+            max-width: 100%;
+            height: auto;
+            border-radius: 10px;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #666;
+        }
+        
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #25D366;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 8px;
+            margin: 15px 0;
+            font-weight: 500;
+        }
+        
+        .connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .waiting {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .steps {
+            text-align: right;
+            background: #e8f5e9;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        
+        .steps h3 {
+            color: #1b5e20;
+            margin-bottom: 10px;
+        }
+        
+        .steps ol {
+            padding-right: 20px;
+            color: #2e7d32;
+            line-height: 1.8;
+        }
+        
+        button {
+            background: #25D366;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 10px 0;
+            width: 100%;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background: #128C7E;
+            transform: scale(1.02);
+        }
+        
+        .footer {
+            margin-top: 20px;
+            color: #999;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 واٹس ایپ ویب</h1>
+        <p>QR کوڈ اسکین کریں</p>
+        
+        <div class="qr-box">
+            <img id="qrImage" src="/qr" alt="QR Code" style="display: none;">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>QR کوڈ جنریٹ ہو رہا ہے...</p>
+            </div>
+        </div>
+        
+        <div class="status waiting" id="status">
+            ⏳ اسکین کرنے کا انتظار ہے...
+        </div>
+        
+        <button onclick="refreshQR()">🔄 نیا QR کوڈ</button>
+        <button onclick="checkStatus()">🔍 سٹیٹس چیک کریں</button>
+        
+        <div class="steps">
+            <h3>مراحل:</h3>
+            <ol>
+                <li>واٹس ایپ کھولیں</li>
+                <li>مینو میں جائیں</li>
+                <li>"واٹس ایپ ویب" منتخب کریں</li>
+                <li>یہ QR کوڈ اسکین کریں</li>
+                <li>کنیکٹ ہونے کا انتظار کریں</li>
+            </ol>
+        </div>
+        
+        <div class="footer">
+            Telegram-WhatsApp Bridge Bot
+        </div>
+    </div>
+    
+    <script>
+        // QR کوڈ لوڈ کریں
+        function loadQR() {
+            fetch('/qr')
+                .then(response => {
+                    if (response.ok) {
+                        document.getElementById('qrImage').src = '/qr?' + new Date().getTime();
+                        document.getElementById('qrImage').style.display = 'block';
+                        document.getElementById('loading').style.display = 'none';
+                    } else {
+                        setTimeout(loadQR, 3000);
+                    }
+                })
+                .catch(() => setTimeout(loadQR, 3000));
+        }
+        
+        // سٹیٹس چیک کریں
+        function checkStatus() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    const statusDiv = document.getElementById('status');
+                    if (data.connected) {
+                        statusDiv.className = 'status connected';
+                        statusDiv.innerHTML = '✅ واٹس ایپ کنیکٹ ہے!';
+                        if (data.target) {
+                            statusDiv.innerHTML += `<br>📱 ٹارگٹ: +${data.target}`;
+                        }
+                    } else {
+                        statusDiv.className = 'status waiting';
+                        statusDiv.innerHTML = '⏳ کنیکٹ نہیں ہے...';
+                    }
+                });
+        }
+        
+        // ریفریش
+        function refreshQR() {
+            document.getElementById('qrImage').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('status').className = 'status waiting';
+            document.getElementById('status').innerHTML = '⏳ QR کوڈ جنریٹ ہو رہا ہے...';
+            
+            setTimeout(loadQR, 2000);
+        }
+        
+        // ہر 5 سیکنڈ بعد سٹیٹس چیک کریں
+        setInterval(checkStatus, 5000);
+        
+        // صفحہ لوڈ ہوتے ہی QR لائیں
+        window.onload = loadQR;
+    </script>
+</body>
+</html>
